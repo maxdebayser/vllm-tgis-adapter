@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from vllm import CompletionOutput, RequestOutput
     from vllm.config import ModelConfig
     from vllm.lora.request import LoRARequest
+    from vllm.prompt_adapter.request import PromptAdapterRequest
     from vllm.sequence import Logprob
 
     from .pb.generation_pb2 import (
@@ -177,11 +178,14 @@ class TextGenerationService(generation_pb2_grpc.GenerationServiceServicer):
         self.skip_special_tokens = not args.output_special_tokens
         self.default_include_stop_seqs = args.default_include_stop_seqs
 
-        self.adapter_store = (
-            AdapterStore(cache_path=args.adapter_cache, adapters={})
-            if args.adapter_cache
-            else None
-        )
+        self.adapter_store: Optional[AdapterStore] = None
+        # Backwards compatibility for TGIS: PREFIX_STORE_PATH
+        adapter_cache_path = args.adapter_cache or args.prefix_store_path
+        if adapter_cache_path:
+            self.adapter_store = AdapterStore(
+                cache_path=adapter_cache_path,
+                adapters={}
+            )
         self.health_servicer = health_servicer
 
     async def post_init(self) -> None:
@@ -596,7 +600,7 @@ class TextGenerationService(generation_pb2_grpc.GenerationServiceServicer):
         self,
         request: SingleGenerationRequest | BatchedGenerationRequest,
         context: ServicerContext,
-    ) -> dict[str, LoRARequest]:
+    ) -> dict[str, LoRARequest | PromptAdapterRequest]:
         try:
             adapters = await validate_adapters(
                 request=request, adapter_store=self.adapter_store
